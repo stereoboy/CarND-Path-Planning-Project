@@ -5,6 +5,7 @@
 #include <iostream>
 #include <thread>
 #include <vector>
+#include "spline.h"
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
@@ -163,6 +164,7 @@ int main() {
   uWS::Hub h;
 
   // Load up map values for waypoint's x,y,s and d normalized normal vectors
+  int lane = 1;
   vector<double> map_waypoints_x;
   vector<double> map_waypoints_y;
   vector<double> map_waypoints_s;
@@ -196,7 +198,7 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&lane, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -232,14 +234,129 @@ int main() {
 
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
           	auto sensor_fusion = j[1]["sensor_fusion"];
+#if 0
+            fprintf(stderr, "%d\n", sensor_fusion.size());
+            fprintf(stderr, "%d\n", sensor_fusion[0].size());
+            for(int i = 0; i < sensor_fusion.size(); i++)
+            {
+              auto elem = sensor_fusion[i];
+              int id = elem[0];
+              double x = elem[1];
+              double y = elem[2];
+              double vx = elem[3];
+              double vy = elem[4];
+              double s  = elem[5];
+              double d  = elem[6];
+              //fprintf(stderr, "%d %f %f %f %f %f %f\n", elem[0], elem[1], elem[2], elem[3], elem[4], elem[5], elem[6]);
+              fprintf(stderr, "%d %f %f %f %f %f %f\n", id, x, y, vx, vy, s, d);
+            }
+#endif
 
           	json msgJson;
 
           	vector<double> next_x_vals;
           	vector<double> next_y_vals;
-
+      
 
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
+            int prev_size = previous_path_x.size();
+            double ref_vel = 49.5; // 50MPH - 22.352 m/s
+            double max_jerk = 10.0;
+            double max_accT = 10.0;
+            double max_accN = 10.0;
+
+            // points for path-smoothing using spline
+            vector<double> ptsx;
+            vector<double> ptsy;
+
+            // target terminal point to append in path array
+            double ref_x;
+            double ref_y;
+            double prev_ref_x;
+            double prev_ref_y;
+            double ref_yaw = deg2rad(car_yaw);
+
+            if (prev_size < 2) { // first two state
+              ref_x = car_x;
+              ref_y = car_y;
+              prev_ref_x = car_x - cos(car_yaw);
+              prev_ref_y = car_y - sin(car_yaw);
+            } else { // after
+              ref_x = previous_path_x[prev_size - 1];
+              ref_y = previous_path_y[prev_size - 1];
+              prev_ref_x = previous_path_x[prev_size - 2];
+              prev_ref_y = previous_path_y[prev_size - 2];
+            }
+
+            ptsx.push_back(prev_ref_x);
+            ptsx.push_back(ref_x);
+            ptsy.push_back(prev_ref_y);
+            ptsy.push_back(ref_y);
+            auto next_wp0 = getXY(car_s+30, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            auto next_wp1 = getXY(car_s+60, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            auto next_wp2 = getXY(car_s+90, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            ptsx.push_back(next_wp0[0]);
+            ptsx.push_back(next_wp1[0]);
+            ptsx.push_back(next_wp2[0]);
+
+            ptsy.push_back(next_wp0[1]);
+            ptsy.push_back(next_wp1[1]);
+            ptsy.push_back(next_wp2[1]);
+
+            // rotate along ref_yaw for path-smoothing
+            for (int i = 0; i < ptsx.size(); i++)
+            {
+              double shift_x = ptsx[i] - ref_x;
+              double shift_y = ptsy[i] - ref_y;
+              ptsx[i] = shift_x*cos(0 - ref_yaw) - shift_y*sin(0 - ref_yaw);
+              ptsy[i] = shift_x*sin(0 - ref_yaw) + shift_y*cos(0 - ref_yaw);
+            }
+
+            tk::spline s;
+            s.set_points(ptsx, ptsy);
+
+            double target_x = 30.0;
+            double target_y = s(target_x);
+            double target_dist = sqrt((target_x*target_x) + (target_y*target_y));
+            double x_add_on = 0;
+
+            for (int i = 0; i < prev_size; i++)
+            {
+              next_x_vals.push_back(previous_path_x[i]);
+              next_y_vals.push_back(previous_path_y[i]);
+            }
+            for (int i = 0; i < 50 - prev_size; i++)
+            {
+              double N = target_dist/(0.02*ref_vel/2.24);
+              double x_point = x_add_on + target_x/N;
+              double y_point = s(x_point);
+
+              x_add_on = x_point;
+
+              double x_ref = x_point;
+              double y_ref = y_point;
+
+              x_point = x_ref*cos(ref_yaw) - y_ref*sin(ref_yaw);
+              y_point = x_ref*sin(ref_yaw) + y_ref*cos(ref_yaw);
+              x_point += ref_x;
+              y_point += ref_y;
+
+              next_x_vals.push_back(x_point);
+              next_y_vals.push_back(y_point);
+            }
+#if 0
+            fprintf(stderr, "angle: %f\n", car_yaw);
+//            int next_w_i = NextWaypoint(car_x, car_y, car_yaw, map_waypoints_x, map_waypoints_y);
+//            auto target = getXY(map_waypoints_s[next_w_i], car_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+//            fprintf(stderr, "previous_path_size: %ld\n", previous_path_x.size());
+            double dist_inc = 0.2;
+            for(int i = 0; i < 50; i++)
+            {
+              auto next = getXY(car_s + (dist_inc*(i+1)), car_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+              next_x_vals.push_back(next[0]);
+              next_y_vals.push_back(next[1]);
+            }
+#endif
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
 
