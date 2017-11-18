@@ -10,9 +10,11 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
 
-#define MAX_PATH_LEN 40
+#define MAX_PATH_LEN 50
 #define TRANSITION_DIST 50.0
 #define SAFE_MARGIN_FRONT 25.0
+#define LC_SAFE_MARGIN_FRONT 30.0
+#define LC_SAFE_MARGIN_REAR 20.0
 #define MAX_REF_VEL 49.0 // 50 MPH - 22.352 m/s
 #define SAFE_VEL_DIFF 0.224 // 0.224 MPH 0.1 m/2
 
@@ -196,7 +198,7 @@ vector<string> successor_states(vector<double> vehicle, string state, int lane, 
     //If state is "LCL" or "LCR", then just return "KL"
     return states;
 }
-
+#if 0
 float lane_speed(vector<double> vehicle, vector<vector<double>> sensor_fusion, int lane) {
     /*
     All non ego vehicles in a lane have the same speed, so to get the speed limit for a lane,
@@ -245,6 +247,7 @@ float lane_speed(vector<double> vehicle, vector<vector<double>> sensor_fusion, i
       return min_vel;
     return MAX_REF_VEL;
 }
+#endif
 
 float lane_speed(vector<double> vehicle, vector<vector<double>> sensor_fusion, int current_lane, int lane) {
     /*
@@ -280,7 +283,7 @@ float lane_speed(vector<double> vehicle, vector<vector<double>> sensor_fusion, i
           }
         }
 
-        if ((current_lane != lane) && ((current_s - 10 < s) && ( s < current_s + 30)))
+        if ((current_lane != lane) && ((current_s - LC_SAFE_MARGIN_REAR < s) && ( s < current_s + LC_SAFE_MARGIN_FRONT)))
         {
           return 0.0;
         }
