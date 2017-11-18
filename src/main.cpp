@@ -160,7 +160,7 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
-vector<string> successor_states(int lane) {
+vector<string> successor_states(vector<double> vehicle, string state, int lane, int lanes_available) {
     /*
     Provides the possible next states given the current state for the FSM 
     discussed in the course, with the exception that lane changes happen 
@@ -168,7 +168,9 @@ vector<string> successor_states(int lane) {
     */
     vector<string> states;
     states.push_back("KL");
-    string state = this->state;
+    double current_s = vehicle[0];
+    double current_d = vehicle[1];
+
     if(state.compare("KL") == 0) {
         states.push_back("PLCL");
         states.push_back("PLCR");
@@ -187,12 +189,84 @@ vector<string> successor_states(int lane) {
     return states;
 }
 
+float lane_speed(vector<double> vehicle, vector<vector<double>> sensor_fusion, int lane) {
+    /*
+    All non ego vehicles in a lane have the same speed, so to get the speed limit for a lane,
+    we can just find one vehicle in that lane.
+    */
+
+    double current_s = vehicle[0];
+    double current_d = vehicle[1];
+
+    double min_vel = 1000000;
+    bool found = false;
+    for(int i = 0; i < sensor_fusion.size(); i++)
+    {
+      auto elem = sensor_fusion[i];
+      int id = elem[0];
+      double x = elem[1];
+      double y = elem[2];
+      double vx = elem[3];
+      double vy = elem[4];
+      double s  = elem[5];
+      double d  = elem[6];
+      double speed = sqrt(vx*vx + vy*vy);
+      if ((d < 2+4*lane + 2) && (d > 2+4*lane - 2))
+      {
+        if ((current_s - 50 < s) && ( s < current_s + 300 ))
+        {
+          if (speed < min_vel)
+          {
+            found = true;
+            min_vel = speed;
+          }
+        }
+      }
+    }
+
+    //Found no vehicle in the lane
+    if (found)
+      return min_vel;
+    return -1.0;
+}
+
+float inefficiency_cost(vector<double> vehicle, double ref_vel, string state, int current_lane, vector<vector<double>> sensor_fusion) {
+    /*
+    Cost becomes higher for trajectories with intended lane and final lane that have slower traffic. 
+    */
+    int intended_lane;
+    float final_lane = current_lane;
+
+    if (state.compare("PLCL") == 0) {
+        intended_lane = current_lane - 1;
+    } else if (state.compare("PLCR") == 0) {
+        intended_lane = current_lane + 1;
+    } else {
+        intended_lane = current_lane;
+    }
+
+    float proposed_speed_intended = lane_speed(vehicle, sensor_fusion, intended_lane);
+    if (proposed_speed_intended < 0) {
+        proposed_speed_intended = ref_vel;
+    }
+
+    float proposed_speed_final = lane_speed(vehicle, sensor_fusion, final_lane);
+    if (proposed_speed_final < 0) {
+        proposed_speed_final = ref_vel;
+    }
+    
+    float cost = (2.0*ref_vel - proposed_speed_intended - proposed_speed_final)/ref_vel;
+
+    return cost;
+}
+
 int main() {
   uWS::Hub h;
 
   // Load up map values for waypoint's x,y,s and d normalized normal vectors
   int lane = 1;
   double ref_vel = 0.0; // 0 MPH - 0 m/s
+#define SAFE_MARGIN_FRONT 30.0
 #define MAX_REF_VEL 49.5 // 50 MPH - 22.352 m/s
 #define SAFE_VEL_DIFF 0.224 // 0.224 MPH 0.1 m/2
   string state = "KL";
@@ -291,17 +365,41 @@ int main() {
               double d  = elem[6];
               double speed = sqrt(vx*vx + vy*vy);
 
-              if ((d < 2+4*lane + 2) && (d > 2+4*lane - 2))
-              {
-                too_close = true;
+              if ((d < 2+4*lane + 2) && (d > 2+4*lane - 2)) {
+                if ((s > car_s) && (s - car_s) < SAFE_MARGIN_FRONT) {
+                  too_close = true;
+                }
               }
             }
-
+#if 1
             if (too_close) {
               ref_vel -= SAFE_VEL_DIFF;
             } else if (ref_vel < MAX_REF_VEL) {
               ref_vel += SAFE_VEL_DIFF;
             }
+#endif
+            fprintf(stderr, "ref_vel: %f\n", ref_vel);
+#if 0 
+            vector<string> states = successor_states({car_s, car_d}, state, lane, 3);
+
+            double min_cost = 100000000;
+
+            for (int i = 0; i < states.size(); i++)
+            {
+              double cost = inefficiency_cost({car_s, car_d}, ref_vel, states[i], lane, sensor_fusion);
+              if (cost < min_cost)
+              {
+                min_cost = cost;
+                state = states[i];
+              }
+            }
+
+            if (state.compare("LCL") == 0) {
+              lane = lane - 1;
+            } else if (state.compare("RCL") == 0) {
+              lane = lane + 1;
+            }
+#endif
 
             // points for path-smoothing using spline
             vector<double> ptsx;
@@ -362,12 +460,13 @@ int main() {
               next_x_vals.push_back(previous_path_x[i]);
               next_y_vals.push_back(previous_path_y[i]);
             }
-            double N = target_dist/(0.02*ref_vel/2.24);
             for (int i = 0; i < 50 - prev_size; i++)
             {
+              double N = target_dist/(0.02*ref_vel/2.24);
               double x_point = (i + 1)*target_x/N;
+              fprintf(stderr, "N:%f\n", N);
+              fprintf(stderr, "x_points:%f\n", x_point);
               double y_point = s(x_point);
-
 
               double x_ref = x_point;
               double y_ref = y_point;
