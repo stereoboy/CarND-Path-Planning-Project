@@ -160,11 +160,43 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+vector<string> successor_states(int lane) {
+    /*
+    Provides the possible next states given the current state for the FSM 
+    discussed in the course, with the exception that lane changes happen 
+    instantaneously, so LCL and LCR can only transition back to KL.
+    */
+    vector<string> states;
+    states.push_back("KL");
+    string state = this->state;
+    if(state.compare("KL") == 0) {
+        states.push_back("PLCL");
+        states.push_back("PLCR");
+    } else if (state.compare("PLCL") == 0) {
+        if (lane != lanes_available - 1) {
+            states.push_back("PLCL");
+            states.push_back("LCL");
+        }
+    } else if (state.compare("PLCR") == 0) {
+        if (lane != 0) {
+            states.push_back("PLCR");
+            states.push_back("LCR");
+        }
+    }
+    //If state is "LCL" or "LCR", then just return "KL"
+    return states;
+}
+
 int main() {
   uWS::Hub h;
 
   // Load up map values for waypoint's x,y,s and d normalized normal vectors
   int lane = 1;
+  double ref_vel = 0.0; // 0 MPH - 0 m/s
+#define MAX_REF_VEL 49.5 // 50 MPH - 22.352 m/s
+#define SAFE_VEL_DIFF 0.224 // 0.224 MPH 0.1 m/2
+  string state = "KL";
+
   vector<double> map_waypoints_x;
   vector<double> map_waypoints_y;
   vector<double> map_waypoints_s;
@@ -198,7 +230,7 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&lane, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&lane, &ref_vel, &state, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -234,9 +266,19 @@ int main() {
 
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
           	auto sensor_fusion = j[1]["sensor_fusion"];
-#if 0
-            fprintf(stderr, "%d\n", sensor_fusion.size());
-            fprintf(stderr, "%d\n", sensor_fusion[0].size());
+
+          	json msgJson;
+
+          	vector<double> next_x_vals;
+          	vector<double> next_y_vals;
+
+          	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
+            int prev_size = previous_path_x.size();
+            double max_jerk = 10.0;
+            double max_accT = 10.0;
+            double max_accN = 10.0;
+            bool too_close = false;
+
             for(int i = 0; i < sensor_fusion.size(); i++)
             {
               auto elem = sensor_fusion[i];
@@ -247,23 +289,19 @@ int main() {
               double vy = elem[4];
               double s  = elem[5];
               double d  = elem[6];
-              //fprintf(stderr, "%d %f %f %f %f %f %f\n", elem[0], elem[1], elem[2], elem[3], elem[4], elem[5], elem[6]);
-              fprintf(stderr, "%d %f %f %f %f %f %f\n", id, x, y, vx, vy, s, d);
+              double speed = sqrt(vx*vx + vy*vy);
+
+              if ((d < 2+4*lane + 2) && (d > 2+4*lane - 2))
+              {
+                too_close = true;
+              }
             }
-#endif
 
-          	json msgJson;
-
-          	vector<double> next_x_vals;
-          	vector<double> next_y_vals;
-      
-
-          	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
-            int prev_size = previous_path_x.size();
-            double ref_vel = 49.5; // 50MPH - 22.352 m/s
-            double max_jerk = 10.0;
-            double max_accT = 10.0;
-            double max_accN = 10.0;
+            if (too_close) {
+              ref_vel -= SAFE_VEL_DIFF;
+            } else if (ref_vel < MAX_REF_VEL) {
+              ref_vel += SAFE_VEL_DIFF;
+            }
 
             // points for path-smoothing using spline
             vector<double> ptsx;
@@ -318,20 +356,18 @@ int main() {
             double target_x = 30.0;
             double target_y = s(target_x);
             double target_dist = sqrt((target_x*target_x) + (target_y*target_y));
-            double x_add_on = 0;
 
             for (int i = 0; i < prev_size; i++)
             {
               next_x_vals.push_back(previous_path_x[i]);
               next_y_vals.push_back(previous_path_y[i]);
             }
+            double N = target_dist/(0.02*ref_vel/2.24);
             for (int i = 0; i < 50 - prev_size; i++)
             {
-              double N = target_dist/(0.02*ref_vel/2.24);
-              double x_point = x_add_on + target_x/N;
+              double x_point = (i + 1)*target_x/N;
               double y_point = s(x_point);
 
-              x_add_on = x_point;
 
               double x_ref = x_point;
               double y_ref = y_point;
