@@ -168,6 +168,7 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+// generate next state candidates
 vector<string> successor_states(vector<double> vehicle, string state, int lane, int lanes_available) {
     /*
     Provides the possible next states given the current state for the FSM 
@@ -198,57 +199,8 @@ vector<string> successor_states(vector<double> vehicle, string state, int lane, 
     //If state is "LCL" or "LCR", then just return "KL"
     return states;
 }
-#if 0
-float lane_speed(vector<double> vehicle, vector<vector<double>> sensor_fusion, int lane) {
-    /*
-    All non ego vehicles in a lane have the same speed, so to get the speed limit for a lane,
-    we can just find one vehicle in that lane.
-    */
 
-    double current_s = vehicle[0];
-    double current_d = vehicle[1];
-
-    double min_vel = MAX_REF_VEL;
-    bool found = false;
-    for(int i = 0; i < sensor_fusion.size(); i++)
-    {
-      auto elem = sensor_fusion[i];
-      int id = elem[0];
-      double x = elem[1];
-      double y = elem[2];
-      double vx = elem[3];
-      double vy = elem[4];
-      double s  = elem[5];
-      double d  = elem[6];
-      double speed = sqrt(vx*vx + vy*vy);
-      fprintf(stderr, "%d pos=%f %f v=%f %f s=%f d=%f speed=%f\n", id, x, y, vx, vy, s, d, speed);
-      if ((d < 2+4*lane + 2) && (d > 2+4*lane - 2))
-      {
-        if ((s > current_s) && ( s < current_s + 100 ))
-        {
-          if (speed < min_vel)
-          {
-            found = true;
-            min_vel = speed;
-          }
-        }
-
-        if (abs(current_d - d) < 4)
-
-        if ((current_s - 5 < s) && ( s < current_s + 30))
-        {
-          return 0.0;
-        }
-      }
-    }
-
-    //Found no vehicle in the lane
-    if (found)
-      return min_vel;
-    return MAX_REF_VEL;
-}
-#endif
-
+// get minimum lane speed by considering other cars' state
 float lane_speed(vector<double> vehicle, vector<vector<double>> sensor_fusion, int current_lane, int lane) {
     /*
     All non ego vehicles in a lane have the same speed, so to get the speed limit for a lane,
@@ -296,6 +248,7 @@ float lane_speed(vector<double> vehicle, vector<vector<double>> sensor_fusion, i
     return MAX_REF_VEL;
 }
 
+// cost calculation
 float inefficiency_cost(vector<double> vehicle, double ref_vel, string state, int current_lane, vector<vector<double>> sensor_fusion) {
     /*
     Cost becomes higher for trajectories with intended lane and final lane that have slower traffic. 
@@ -458,7 +411,8 @@ int main() {
             fprintf(stderr, "$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n");
             fprintf(stderr, "state: %s\n", state.c_str());
             fprintf(stderr, "ref_vel: %f\n", ref_vel);
-#if 1
+
+            // state maintain
             vector<string> states = successor_states({car_s, car_d}, state, lane, 3);
 
             double min_cost = 100000000;
@@ -482,7 +436,6 @@ int main() {
             } else if (state.compare("LCR") == 0) {
               lane = lane + 1;
             }
-#endif
 
             // points for path-smoothing using spline
             vector<double> ptsx;
